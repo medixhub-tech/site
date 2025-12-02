@@ -14,7 +14,9 @@ CREATE TABLE usuarios (
     nivel ENUM('admin', 'editor') DEFAULT 'editor',
     status ENUM('ativo', 'inativo') DEFAULT 'ativo',
     data_cadastro TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    ultimo_login TIMESTAMP NULL
+    ultimo_login TIMESTAMP NULL,
+    
+    INDEX idx_usuario_status (usuario, status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Tabela de configurações do site
@@ -24,7 +26,9 @@ CREATE TABLE config (
     valor TEXT,
     descricao VARCHAR(255),
     tipo ENUM('texto', 'imagem', 'senha', 'numero') DEFAULT 'texto',
-    data_atualizacao TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    data_atualizacao TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    
+    INDEX idx_config_chave (chave)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Tabela de menus da navegação
@@ -44,7 +48,8 @@ CREATE TABLE menus (
     
     INDEX idx_status (status),
     INDEX idx_ordem (ordem),
-    INDEX idx_tipo_menu (tipo_menu)
+    INDEX idx_tipo_menu (tipo_menu),
+    INDEX idx_menus_slug (slug)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Tabela de contatos recebidos do formulário
@@ -67,6 +72,7 @@ CREATE TABLE contatos (
     INDEX idx_email (email),
     INDEX idx_status (status),
     INDEX idx_data_criacao (data_criacao),
+    INDEX idx_contatos_data (data_criacao),
     FOREIGN KEY (respondido_por) REFERENCES usuarios(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -104,7 +110,8 @@ CREATE TABLE secoes (
     
     INDEX idx_status (status),
     INDEX idx_ordem (ordem),
-    INDEX idx_tipo (tipo)
+    INDEX idx_tipo (tipo),
+    INDEX idx_secoes_tipo_status (tipo, status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Tabela para configurações de SEO
@@ -123,7 +130,7 @@ CREATE TABLE seo (
 
 -- Inserir dados iniciais
 
--- Usuários administrativos
+-- Usuários administrativos (mantendo MD5 como solicitado)
 INSERT INTO usuarios (usuario, senha, nome, nivel) VALUES 
 ('ttatim', MD5('123456'), 'Ttatim', 'admin'),
 ('telma', MD5('123456'), 'Telma', 'admin');
@@ -175,14 +182,14 @@ INSERT INTO seo (pagina, titulo, descricao, palavras_chave) VALUES
 -- Views para facilitar consultas
 
 -- View para menus ativos ordenados
-CREATE VIEW view_menus_ativos AS
+CREATE OR REPLACE VIEW view_menus_ativos AS
 SELECT id, titulo, slug, imagem, icone, ordem, target, tipo_menu
 FROM menus 
 WHERE status = 'ativo'
 ORDER BY tipo_menu, ordem, titulo;
 
 -- View para configurações formatadas
-CREATE VIEW view_config_formatada AS
+CREATE OR REPLACE VIEW view_config_formatada AS
 SELECT 
     chave,
     valor,
@@ -195,7 +202,7 @@ SELECT
 FROM config;
 
 -- View para contatos recentes
-CREATE VIEW view_contatos_recentes AS
+CREATE OR REPLACE VIEW view_contatos_recentes AS
 SELECT 
     c.id,
     c.nome,
@@ -211,8 +218,9 @@ ORDER BY c.data_criacao DESC;
 
 -- Stored Procedures
 
--- Procedure para registrar log
 DELIMITER $$
+
+-- Procedure para registrar log
 CREATE PROCEDURE registrar_log(
     IN p_usuario_id INT,
     IN p_acao VARCHAR(100),
@@ -225,10 +233,8 @@ BEGIN
     INSERT INTO logs (usuario_id, acao, modulo, descricao, ip_address, user_agent)
     VALUES (p_usuario_id, p_acao, p_modulo, p_descricao, p_ip, p_user_agent);
 END$$
-DELIMITER ;
 
 -- Procedure para atualizar último login
-DELIMITER $$
 CREATE PROCEDURE atualizar_ultimo_login(
     IN p_usuario_id INT
 )
@@ -237,25 +243,20 @@ BEGIN
     SET ultimo_login = CURRENT_TIMESTAMP 
     WHERE id = p_usuario_id;
 END$$
-DELIMITER ;
-
--- Triggers
 
 -- Trigger para criar slug automaticamente
-DELIMITER $$
 CREATE TRIGGER before_insert_menus
 BEFORE INSERT ON menus
 FOR EACH ROW
 BEGIN
     IF NEW.slug IS NULL OR NEW.slug = '' THEN
         SET NEW.slug = LOWER(REPLACE(NEW.titulo, ' ', '-'));
+        -- Remove caracteres especiais mantendo apenas letras, números e hífens
         SET NEW.slug = REGEXP_REPLACE(NEW.slug, '[^a-z0-9-]', '');
     END IF;
 END$$
-DELIMITER ;
 
 -- Trigger para logs automáticos de alterações em menus
-DELIMITER $$
 CREATE TRIGGER after_update_menus
 AFTER UPDATE ON menus
 FOR EACH ROW
@@ -271,13 +272,8 @@ BEGIN
         );
     END IF;
 END$$
-DELIMITER ;
 
--- Índices adicionais para otimização
-CREATE INDEX idx_config_chave ON config(chave);
-CREATE INDEX idx_menus_slug ON menus(slug);
-CREATE INDEX idx_contatos_data ON contatos(data_criacao);
-CREATE INDEX idx_secoes_tipo_status ON secoes(tipo, status);
+DELIMITER ;
 
 -- Comentários das tabelas
 ALTER TABLE usuarios COMMENT = 'Usuários do sistema administrativo';
@@ -287,3 +283,6 @@ ALTER TABLE contatos COMMENT = 'Contatos recebidos pelo formulário';
 ALTER TABLE logs COMMENT = 'Logs de atividades do sistema';
 ALTER TABLE secoes COMMENT = 'Seções da página inicial';
 ALTER TABLE seo COMMENT = 'Configurações de SEO por página';
+
+-- Inserir um log inicial
+CALL registrar_log(1, 'INSTALACAO_SISTEMA', 'sistema', 'Banco de dados instalado com sucesso', '127.0.0.1', 'MySQL Installer');
